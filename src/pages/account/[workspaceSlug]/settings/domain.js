@@ -10,11 +10,11 @@ import Button from '@/components/Button/index';
 import DomainCard from '@/components/Card/domain';
 import Card from '@/components/Card/index';
 import Content from '@/components/Content/index';
+import Meta from '@/components/Meta/index';
 import { useDomains } from '@/hooks/data';
 import { AccountLayout } from '@/layouts/index';
 import api from '@/lib/common/api';
-import prisma from '@/prisma/index';
-import { TeamRole } from '@prisma/client';
+import { getWorkspace, isWorkspaceOwner } from '@/prisma/services/workspace';
 
 const Domain = ({ isTeamOwner, workspace }) => {
   const { data, isLoading } = useDomains(workspace.slug);
@@ -64,6 +64,7 @@ const Domain = ({ isTeamOwner, workspace }) => {
 
   return (
     <AccountLayout>
+      <Meta title={`Nextacular - ${workspace.name} | Domains`} />
       <Content.Title
         title="Subdomain Management"
         subtitle="Manage your subdomain"
@@ -78,13 +79,9 @@ const Domain = ({ isTeamOwner, workspace }) => {
             <div className="flex items-center justify-between px-3 py-2 font-mono text-sm border rounded md:w-1/2">
               <div>
                 <strong>{workspace.slug}</strong>
-                <span className="pr-3">
-                  .{process.env.NEXT_PUBLIC_ROOT_URL}
-                </span>
+                <span className="pr-3">.{workspace.host}</span>
               </div>
-              <Link
-                href={`http://${workspace.slug}.${process.env.NEXT_PUBLIC_ROOT_URL}`}
-              >
+              <Link href={`http://${workspace.hostname}`}>
                 <a target="_blank">
                   <ExternalLinkIcon className="w-5 h-5 cursor-pointer hover:text-blue-600" />
                 </a>
@@ -136,7 +133,7 @@ const Domain = ({ isTeamOwner, workspace }) => {
                 <DomainCard
                   key={index}
                   apex={process.env.NEXT_PUBLIC_VERCEL_IP_ADDRESS}
-                  cname={`${workspace.slug}.${process.env.NEXT_PUBLIC_ROOT_URL}`}
+                  cname={workspace.hostname}
                   isLoading={false}
                   name={domain.name}
                   refresh={refresh}
@@ -162,47 +159,17 @@ export const getServerSideProps = async (context) => {
   let workspace = null;
 
   if (session) {
-    const slug = context.params.workspaceSlug;
-    workspace = await prisma.workspace.findFirst({
-      select: {
-        creatorId: true,
-        slug: true,
-        members: {
-          select: {
-            email: true,
-            teamRole: true,
-          },
-        },
-      },
-      where: {
-        OR: [
-          { id: session.user.userId },
-          {
-            members: {
-              some: {
-                email: session.user.email,
-                deletedAt: null,
-              },
-            },
-          },
-        ],
-        AND: {
-          deletedAt: null,
-          slug,
-        },
-      },
-    });
+    workspace = await getWorkspace(
+      session.user.userId,
+      session.user.email,
+      context.params.workspaceSlug
+    );
 
     if (workspace) {
-      const member = workspace.members.find(
-        (member) =>
-          member.email === session.user.email &&
-          member.teamRole === TeamRole.OWNER
-      );
-
-      if (member) {
-        isTeamOwner = true;
-      }
+      const { host } = new URL(process.env.APP_URL);
+      isTeamOwner = isWorkspaceOwner(session.user.email, workspace);
+      workspace.host = host;
+      workspace.hostname = `${workspace.slug}.${host}`;
     }
   }
 
